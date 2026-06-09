@@ -68,10 +68,6 @@ export function LandingPage() {
              onClick={() => navigate(`/room/${room.id}`)} 
              className="bg-slate-800 rounded-[2rem] overflow-hidden cursor-pointer hover:-translate-y-2 hover:shadow-2xl hover:shadow-blue-500/30 transition-all duration-300 relative group h-80 flex flex-col"
           >
-            <div className="absolute top-6 left-6 w-14 h-14 bg-black/50 backdrop-blur-md rounded-2xl flex items-center justify-center font-bold text-2xl text-white z-10 border border-white/10">
-               {room.id}
-            </div>
-            
             <img 
                src={getImageForRoom(room.id)} 
                className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity duration-300 absolute inset-0" 

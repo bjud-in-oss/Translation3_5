@@ -48,10 +48,10 @@ export function HostPanel({
   const isHost = me.role === 'HOST';
 
   return (
-    <div className="w-full h-full relative" style={{ perspective: '1200px' }}>
+    <div className="w-full h-full relative flex flex-col" style={{ perspective: '1200px' }}>
        {/* Small menu inside Host Panel */}
        {me.name && (
-          <div className="absolute -top-12 left-0 right-0 flex justify-center gap-4 z-20">
+          <div className="flex justify-center gap-4 z-20 mb-6 shrink-0">
              <button 
                 onClick={() => setInternalFace('MAIN')}
                 className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition ${internalFace === 'MAIN' ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'}`}
@@ -134,17 +134,17 @@ export function HostPanel({
                       </button>
                    </div>
                 ) : (
-                   <div className="bg-orange-500/10 rounded-2xl p-4 flex items-center gap-4 mb-6 border border-orange-500/20 text-orange-200">
-                      <ShieldAlert size={24} className="text-orange-500 shrink-0" />
-                      <p className="text-sm">You are logged in as {me.name}, but {roomState.adminName || 'someone else'} currently holds the Host privileges.</p>
-                      <button onClick={()=> onSetName(me.name!, 'HOST')} className="ml-auto px-4 py-2 bg-orange-500/20 hover:bg-orange-500/40 rounded-xl text-orange-400 text-sm font-semibold transition">
-                         Take Over
+                   <div className="bg-slate-900/50 rounded-2xl p-4 flex items-center gap-4 mb-6 border border-white/5">
+                      <UserCog size={24} className="text-slate-500 shrink-0" />
+                      <p className="text-sm text-slate-300 flex-1">View list of participants and channel capabilities.</p>
+                      <button onClick={()=> onSetName(me.name!, 'HOST')} className="px-4 py-2 bg-blue-600/20 hover:bg-blue-600/40 rounded-xl text-blue-400 text-sm font-semibold transition whitespace-nowrap">
+                         Become Host
                       </button>
                    </div>
                 )}
 
                 <h4 className="font-medium text-slate-400 mb-3 ml-2">Session Participants ({clients.length})</h4>
-                <div className="flex-1 overflow-y-auto space-y-2 pr-2">
+                <div className="flex-1 overflow-y-auto space-y-2 pr-2 pb-24 border-t border-white/5 pt-4">
                    {clients.map(c => (
                      <div key={c.id} className="bg-slate-900 p-4 rounded-2xl flex items-center justify-between border border-white/5 hover:border-white/10 transition">
                         <div className="flex items-center gap-3">
