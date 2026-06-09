@@ -82,10 +82,41 @@ export function ActiveRoom() {
         }
       };
       
-      socket.onerror = () => navigate('/');
-    } catch(e) { navigate('/'); }
+      socket.onerror = () => {
+         console.warn('WebSocket error, connection may be degraded.');
+      };
+    } catch(e) { 
+         console.error('Failed to create WebSocket:', e);
+    }
+    
+    // Fallback for static hosting / no backend
+    const fallbackTimer = setTimeout(() => {
+       setRoomState(prev => {
+          if (prev) return prev;
+          setMe({
+             id: 'local-1',
+             roomId: roomId || '1',
+             name: localStorage.getItem('savedName') || null,
+             role: 'LISTENER',
+             targetLanguage: null,
+             isSpeaking: false
+          });
+          return {
+             id: roomId || '1',
+             name: `Room ${roomId}`,
+             type: 'CLASSROOM',
+             adminId: null,
+             adminName: null,
+             hostConnected: false,
+             mode: 'ONE_WAY',
+             aecEnabled: true,
+             activeLanguages: []
+          };
+       });
+    }, 1500);
 
     return () => {
+      clearTimeout(fallbackTimer);
       if (socket) socket.close();
       audioManager.current.stopCapture();
     };
