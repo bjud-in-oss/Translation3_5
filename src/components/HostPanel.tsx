@@ -29,14 +29,14 @@ export function HostPanel({
   onSelectOutput,
   onSetName
 }: HostPanelProps) {
-  const [internalFace, setInternalFace] = useState<'LOGIN' | 'MAIN' | 'PRO'>('LOGIN');
+  const [internalFace, setInternalFace] = useState<'LOGIN' | 'MAIN' | 'PRO' | 'CONFIRM_HOST'>(me.name && me.role === 'HOST' ? 'MAIN' : (me.name ? 'MAIN' : 'LOGIN'));
   const [tempName, setTempName] = useState(me.name || localStorage.getItem('savedName') || '');
 
   useEffect(() => {
-     if (me.name) {
-        setInternalFace('MAIN');
+     if (me.role === 'HOST') {
+        setInternalFace(prev => prev === 'CONFIRM_HOST' || prev === 'LOGIN' ? 'MAIN' : prev);
      }
-  }, [me.name]);
+  }, [me.role]);
 
   const handleSubmitName = () => {
      if (tempName.trim()) {
@@ -49,20 +49,15 @@ export function HostPanel({
 
   return (
     <div className="w-full h-full relative flex flex-col" style={{ perspective: '1200px' }}>
-       {/* Small menu inside Host Panel */}
+       {/* Floating Toggle below content */}
        {me.name && (
-          <div className="flex justify-center gap-4 z-20 mb-6 shrink-0">
+          <div className="absolute bottom-4 right-4 z-50">
              <button 
-                onClick={() => setInternalFace('MAIN')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition ${internalFace === 'MAIN' ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'}`}
+                onClick={() => setInternalFace(internalFace === 'MAIN' ? 'PRO' : 'MAIN')}
+                className="flex items-center justify-center p-4 rounded-full bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 shadow-xl border border-white/10 transition-all pointer-events-auto"
+                title={internalFace === 'MAIN' ? "Advanced AV" : "Dashboard"}
              >
-                <Users size={16} /> Dashboard
-             </button>
-             <button 
-                onClick={() => setInternalFace('PRO')}
-                className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium transition ${internalFace === 'PRO' ? 'bg-blue-600 text-white' : 'bg-slate-900 text-slate-400 hover:text-white'}`}
-             >
-                <Settings size={16} /> Advanced AV
+                {internalFace === 'MAIN' ? <Settings size={28} /> : <Users size={28} />}
              </button>
           </div>
        )}
@@ -103,6 +98,47 @@ export function HostPanel({
              </motion.div>
           )}
 
+          {internalFace === 'CONFIRM_HOST' && (
+             <motion.div
+                key="CONFIRM_HOST"
+                initial={{ rotateX: 90, opacity: 0 }}
+                animate={{ rotateX: 0, opacity: 1 }}
+                exit={{ rotateX: -90, opacity: 0 }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+                className="absolute inset-0 flex flex-col justify-center items-center text-center p-6 bg-slate-900 rounded-[2rem] border border-white/5"
+                style={{ transformStyle: 'preserve-3d' }}
+             >
+                <ShieldAlert size={48} className="text-blue-500 mb-6" />
+                <h3 className="text-2xl font-semibold mb-2">Become Host</h3>
+                <p className="text-slate-400 mb-8">Are you sure you want to take control of this room? Please confirm your presenter name.</p>
+                <div className="w-full max-w-sm flex bg-slate-950 p-2 rounded-2xl border border-white/10 shadow-inner mb-6">
+                   <input
+                     autoFocus
+                     disabled={me.role === 'HOST'}
+                     value={tempName}
+                     onChange={(e) => setTempName(e.target.value)}
+                     onKeyDown={(e) => e.key === 'Enter' && handleSubmitName()}
+                     className="flex-1 bg-transparent px-4 font-medium outline-none text-white placeholder-slate-600"
+                     placeholder="Enter presenter name..."
+                   />
+                </div>
+                <div className="flex gap-4 w-full max-w-sm">
+                   <button 
+                     onClick={() => setInternalFace('MAIN')}
+                     className="flex-1 px-4 py-3 rounded-xl bg-slate-800 text-slate-300 font-medium hover:bg-slate-700 transition"
+                   >
+                      Cancel
+                   </button>
+                   <button 
+                     onClick={handleSubmitName}
+                     className="flex-1 px-4 py-3 rounded-xl bg-blue-600 text-white font-medium hover:bg-blue-500 transition shadow-lg shadow-blue-500/20"
+                   >
+                      Confirm
+                   </button>
+                </div>
+             </motion.div>
+          )}
+
           {internalFace === 'MAIN' && (
              <motion.div
                 key="MAIN"
@@ -137,7 +173,7 @@ export function HostPanel({
                    <div className="bg-slate-900/50 rounded-2xl p-4 flex items-center gap-4 mb-6 border border-white/5">
                       <UserCog size={24} className="text-slate-500 shrink-0" />
                       <p className="text-sm text-slate-300 flex-1">View list of participants and channel capabilities.</p>
-                      <button onClick={()=> onSetName(me.name!, 'HOST')} className="px-4 py-2 bg-blue-600/20 hover:bg-blue-600/40 rounded-xl text-blue-400 text-sm font-semibold transition whitespace-nowrap">
+                      <button onClick={()=> setInternalFace('CONFIRM_HOST')} className="px-4 py-2 bg-blue-600/20 hover:bg-blue-600/40 rounded-xl text-blue-400 text-sm font-semibold transition whitespace-nowrap">
                          Become Host
                       </button>
                    </div>
@@ -184,7 +220,7 @@ export function HostPanel({
                 className="absolute inset-0 flex flex-col"
                 style={{ transformStyle: 'preserve-3d' }}
              >
-                <div className="flex-1 bg-slate-900 rounded-[2rem] p-6 border border-white/5 space-y-8">
+                <div className="flex-1 bg-slate-900 rounded-[2rem] p-6 border border-white/5 space-y-8 overflow-y-auto pb-24 custom-scrollbar">
                    <div>
                      <label className="flex items-center gap-2 text-sm font-medium text-slate-400 mb-3"><Mic size={16} /> Audio Input Hardware</label>
                      <div className="bg-slate-950 border border-slate-800 rounded-xl p-1 shadow-inner">

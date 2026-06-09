@@ -4,7 +4,7 @@ import { createServer as createViteServer } from 'vite';
 import { WebSocketServer, WebSocket } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 import { GoogleGenAI } from '@google/genai';
-import { Room, ClientData, ControlMessage } from './src/types';
+import { Room, ClientData, ControlMessage, ClientRole } from './src/types';
 
 // State Management
 const rooms: Map<string, Room> = new Map([
@@ -21,8 +21,11 @@ const clientSockets: Map<string, WebSocket> = new Map();
 interface GeminiSession {
   roomId: string;
   targetLanguage: string;
-  ws: WebSocket | null; 
+  liveSession: any | null; 
   clients: Set<string>; // Client IDs listening to this session
+  createdAt: number;
+  isDemo: boolean;
+  apiKey: string | null;
 }
 const geminiSessions: Map<string, GeminiSession> = new Map(); // Key: `${roomId}_${targetLanguage}`
 
@@ -55,7 +58,21 @@ async function startServer() {
     console.log(`Server running on port ${PORT}`);
   });
 
-  const wss = new WebSocketServer({ server });
+  const wss = new WebSocketServer({ noServer: true });
+
+  server.on('upgrade', (req, socket, head) => {
+    // Let Vite handle its own HMR websockets
+    if (req.headers['sec-websocket-protocol'] === 'vite-hmr' || req.url === '/vite-hmr') {
+      return;
+    }
+    
+    // We only want our app websocket connections here (typically at '/')
+    if (req.url === '/') {
+       wss.handleUpgrade(req, socket, head, (ws) => {
+          wss.emit('connection', ws, req);
+       });
+    }
+  });
 
   wss.on('connection', (ws) => {
     let clientId = uuidv4();
@@ -66,7 +83,7 @@ async function startServer() {
         // This is audio data (16kHz PCM from a speaker).
         // Find the client and route to all active Gemini sessions in the room
         const client = clients.get(clientId);
-        if (client && (client.role === 'HOST_AUDIO_INJECTOR' || client.role === 'HOST_CONTROLLER' || client.role === 'PARTICIPANT')) {
+        if (client && (client.role === 'HOST' || client.role === 'PARTICIPANT')) {
           const room = rooms.get(client.roomId);
           if (room) {
              // Basic routing: send this audio to ALL gemini sessions for this room.
@@ -116,7 +133,8 @@ async function startServer() {
         name: msg.name || null,
         role: role,
         targetLanguage: null,
-        isSpeaking: false
+        isSpeaking: false,
+        apiKey: null
       };
       
       clients.set(clientId, newClient);
@@ -160,17 +178,20 @@ async function startServer() {
              broadcastRoomState(client.roomId);
           }
         }
+      } else if (msg.type === 'SET_API_KEY') {
+         client.apiKey = msg.apiKey;
+         if (client.targetLanguage) {
+             ensureGeminiSession(client.roomId, client.targetLanguage, clientId, true);
+         }
       } else if (msg.type === 'SET_LANGUAGE') {
-        if (room.activeLanguages.includes(msg.language)) {
-           client.targetLanguage = msg.language;
-           
-           // Remove from old session
-           const oldSessions = Array.from(geminiSessions.values()).filter(s => s.clients.has(clientId));
-           oldSessions.forEach(s => s.clients.delete(clientId));
-           
-           ensureGeminiSession(client.roomId, msg.language, clientId);
-           broadcastRoomState(client.roomId);
-        }
+         client.targetLanguage = msg.language;
+         
+         // Remove from old session
+         const oldSessions = Array.from(geminiSessions.values()).filter(s => s.clients.has(clientId));
+         oldSessions.forEach(s => s.clients.delete(clientId));
+         
+         ensureGeminiSession(client.roomId, msg.language, clientId, false);
+         broadcastRoomState(client.roomId);
       } else if (msg.type === 'SET_SPEAKING') {
          client.isSpeaking = msg.isSpeaking;
          broadcastRoomState(client.roomId);
@@ -238,40 +259,141 @@ async function startServer() {
     });
   }
 
-  function ensureGeminiSession(roomId: string, targetLanguage: string, clientId: string) {
-    // Basic scaffold: This is where we would setup the connection to Google Live API
-    // Real implementation requires connecting to `wss://generativelanguage.googleapis.com/...`
+  function ensureGeminiSession(roomId: string, targetLanguage: string, clientId: string, forceReconnect: boolean) {
     const sessionKey = `${roomId}_${targetLanguage}`;
     let session = geminiSessions.get(sessionKey);
+    const client = clients.get(clientId);
+    const room = rooms.get(roomId);
     
-    if (!session) {
+    // Determine API Key (bypass demo limit if custom key is provided)
+    // 1. System environment
+    // 2. The client's own key
+    // 3. The room host's key
+    let apiKey = process.env.GEMINI_API_KEY;
+    let isDemo = true;
+
+    if (client?.apiKey) {
+       apiKey = client.apiKey;
+       isDemo = false;
+    } else if (room?.adminId) {
+       const hostClient = clients.get(room.adminId);
+       if (hostClient?.apiKey) {
+          apiKey = hostClient.apiKey;
+          isDemo = false;
+       }
+    }
+
+    if (process.env.GEMINI_API_KEY) {
+       isDemo = false;
+    }
+    
+    if (!session || forceReconnect) {
+      if (session && session.liveSession) {
+         try { session.liveSession.close(); } catch(e){}
+      }
       session = {
         roomId,
         targetLanguage,
-        ws: null, // Placeholder for actual Gemini WS
-        clients: new Set()
+        liveSession: null,
+        clients: session ? session.clients : new Set(),
+        createdAt: Date.now(),
+        isDemo,
+        apiKey: apiKey || null
       };
       geminiSessions.set(sessionKey, session);
       
-      // TODO: Connect to Gemini and handle the stream
-      connectToGemini(sessionKey, targetLanguage);
+      connectToGemini(sessionKey, targetLanguage, session);
     }
     
     session.clients.add(clientId);
   }
 
-  function connectToGemini(sessionKey: string, targetLanguage: string) {
-     // Placeholder: Here we actually connect to Gemini Live API over WS.
-     // For now we just simulate it by doing nothing until the full implementation.
+  async function connectToGemini(sessionKey: string, targetLanguage: string, session: GeminiSession) {
+     if (!session.apiKey) {
+        console.error("No API Key available to connect Gemini");
+        return;
+     }
+
+     const ai = new GoogleGenAI({ apiKey: session.apiKey });
+     try {
+       session.liveSession = await ai.live.connect({
+          model: 'gemini-3.5-live-translate-preview',
+          config: {
+             responseModalities: ['AUDIO'] as any,
+             translationConfig: {
+                targetLanguageCode: targetLanguage,
+                echoTargetLanguage: false
+             },
+             outputAudioTranscription: {},
+             inputAudioTranscription: {},
+             systemInstruction: "You are a real-time translator."
+          },
+          callbacks: {
+             onmessage: (msg: any) => {
+                // If demo mode expired, stop doing anything.
+                if (session.isDemo && Date.now() - session.createdAt > 15 * 60 * 1000) return;
+
+                // Route audio back to clients listening to this session
+                const audio = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
+                if (audio) {
+                   session.clients.forEach(clientId => {
+                      const ws = clientSockets.get(clientId);
+                      if (ws && ws.readyState === WebSocket.OPEN) {
+                         ws.send(JSON.stringify({ type: 'AUDIO', audio }));
+                      }
+                   });
+                }
+                
+                // Route transcription to display in UI
+                if (msg.serverContent?.modelTurn?.parts) {
+                    const textParts = msg.serverContent.modelTurn.parts.filter(p => !!p.text);
+                    if (textParts.length > 0) {
+                       const text = textParts.map(p => p.text).join(' ');
+                       session.clients.forEach(clientId => {
+                          const ws = clientSockets.get(clientId);
+                          if (ws && ws.readyState === WebSocket.OPEN) {
+                             ws.send(JSON.stringify({ type: 'TRANSCRIPTION', text, language: targetLanguage, isFinal: true }));
+                          }
+                       });
+                    }
+                }
+             }
+          }
+       });
+       console.log(`Gemini connected for ${sessionKey}`);
+     } catch(e) {
+        console.error("Gemini Connection Error:", e);
+     }
   }
 
   function broadcastAudioToGemini(roomId: string, audioBuffer: Buffer) {
-     // Forward the speaker's PCM to all active Gemini sessions in this room.
      const sessions = Array.from(geminiSessions.values()).filter(s => s.roomId === roomId);
      sessions.forEach(s => {
-       // if (s.ws && s.ws.readyState === WebSocket.OPEN) {
-       //    s.ws.send(JSON.stringify({ realtimeInput: { mediaChunks: [{ mimeType: 'audio/pcm;rate=16000', data: audioBuffer.toString('base64') }] } }));
-       // }
+       if (s.isDemo && Date.now() - s.createdAt > 15 * 60 * 1000) {
+           // Notify clients that they need API Key
+           s.clients.forEach(clientId => {
+               const ws = clientSockets.get(clientId);
+               if (ws && ws.readyState === WebSocket.OPEN) {
+                   ws.send(JSON.stringify({ type: 'API_KEY_REQUIRED' }));
+               }
+           });
+           // Close the session
+           if (s.liveSession) {
+               try { s.liveSession.close(); } catch(e){}
+               s.liveSession = null;
+           }
+           geminiSessions.delete(`${s.roomId}_${s.targetLanguage}`);
+           return;
+       }
+       if (s.liveSession) {
+          try {
+             s.liveSession.sendRealtimeInput({
+                audio: { data: audioBuffer.toString('base64'), mimeType: 'audio/pcm;rate=16000' }
+             });
+          } catch(e) {
+             console.error("Error sending input to Gemini:", e);
+          }
+       }
      });
   }
 

@@ -37,6 +37,9 @@ export function ActiveRoom() {
   const [selectedOutput, setSelectedOutput] = useState<string>('');
 
   const audioManager = useRef<AudioManager>(new AudioManager());
+  const [transcriptions, setTranscriptions] = useState<string>('');
+  const [showApiModal, setShowApiModal] = useState(false);
+  const [customApiInput, setCustomApiInput] = useState('');
 
   useEffect(() => {
     navigator.mediaDevices.enumerateDevices().then(devs => {
@@ -57,6 +60,10 @@ export function ActiveRoom() {
          const savedName = localStorage.getItem('savedName') || null;
          socket.send(JSON.stringify({ type: 'JOIN_ROOM', roomId: roomId, name: savedName }));
          const savedLang = localStorage.getItem('savedLanguage');
+         const savedApi = localStorage.getItem('customApiKey');
+         if (savedApi) {
+            socket.send(JSON.stringify({ type: 'SET_API_KEY', apiKey: savedApi }));
+         }
          if (savedLang) {
            socket.send(JSON.stringify({ type: 'SET_LANGUAGE', language: savedLang }));
          }
@@ -64,7 +71,7 @@ export function ActiveRoom() {
 
       socket.onmessage = async (event) => {
         if (typeof event.data === 'string') {
-          const msg: ControlMessage = JSON.parse(event.data);
+          const msg = JSON.parse(event.data);
           if (msg.type === 'ROOM_STATE') {
             setRoomState(msg.room);
             setClients(msg.clients);
@@ -74,6 +81,24 @@ export function ActiveRoom() {
             if (myData) setMe(myData);
           } else if (msg.type === 'ERROR') {
              navigate('/');
+          } else if (msg.type === 'AUDIO') {
+             const binaryStr = window.atob(msg.audio);
+             const len = binaryStr.length;
+             const bytes = new Uint8Array(len);
+             for (let i = 0; i < len; i++) {
+                 bytes[i] = binaryStr.charCodeAt(i);
+             }
+             if (!audioMuted) {
+                 audioManager.current.playPCM24(bytes.buffer);
+             }
+          } else if (msg.type === 'TRANSCRIPTION') {
+             setTranscriptions(prev => {
+                const combined = prev + msg.text;
+                // keep the last 500 characters so it doesn't get infinitely long
+                return combined.length > 500 ? combined.substring(combined.length - 500) : combined;
+             });
+          } else if (msg.type === 'API_KEY_REQUIRED') {
+             setShowApiModal(true);
           }
         } else if (event.data instanceof Blob) {
           const arrayBuffer = await event.data.arrayBuffer();
@@ -150,6 +175,7 @@ export function ActiveRoom() {
   };
 
   const handleSelectLanguage = (code: string) => {
+     setTranscriptions('');
      const newRecents = [code, ...recentLangs.filter(l => l !== code)].slice(0, 5);
      setRecentLangs(newRecents);
      localStorage.setItem('recentLangs', JSON.stringify(newRecents));
@@ -307,7 +333,7 @@ export function ActiveRoom() {
                       animate={{ rotateY: 0, opacity: 1, scale: 1 }}
                       exit={{ rotateY: -90, opacity: 0, scale: 0.95 }}
                       transition={{ type: "spring", stiffness: 300, damping: 30 }}
-                      className="absolute inset-0 bg-slate-900/90 backdrop-blur-3xl rounded-[2.5rem] border border-white/10 shadow-2xl p-6 md:p-12 flex flex-col overflow-y-auto custom-scrollbar"
+                      className="absolute inset-0 bg-slate-900/90 backdrop-blur-3xl rounded-[2.5rem] border border-white/10 shadow-2xl p-6 md:p-12 flex flex-col overflow-hidden"
                       style={{ transformStyle: 'preserve-3d' }}
                    >
                       <HostPanel 
@@ -365,8 +391,8 @@ export function ActiveRoom() {
                                   <span className="text-green-400 text-sm font-bold tracking-widest uppercase">Live Translation Active</span>
                                </div>
                             )}
-                            <p className="text-3xl md:text-5xl lg:text-7xl font-semibold text-white leading-tight tracking-tight max-w-4xl">
-                               {me.targetLanguage ? `The requested real-time content translation will be streamed here in ${LANGUAGES[me.targetLanguage as keyof typeof LANGUAGES]}...` : 'Select a language to see real-time translated captions.'}
+                            <p className="text-3xl md:text-5xl lg:text-7xl font-semibold text-white leading-tight tracking-tight max-w-4xl drop-shadow-2xl">
+                               {transcriptions ? transcriptions : (me.targetLanguage ? `The requested real-time content translation will be streamed here in ${LANGUAGES[me.targetLanguage as keyof typeof LANGUAGES]}...` : 'Select a language to see real-time translated captions.')}
                             </p>
                          </div>
                       )}
@@ -375,6 +401,46 @@ export function ActiveRoom() {
              </AnimatePresence>
           </div>
        </div>
+
+       {/* API Key Modal */}
+       <AnimatePresence>
+          {showApiModal && (
+             <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                <motion.div 
+                   initial={{ opacity: 0, scale: 0.95 }}
+                   animate={{ opacity: 1, scale: 1 }}
+                   exit={{ opacity: 0, scale: 0.95 }}
+                   className="bg-slate-900 border border-slate-700 p-8 rounded-[2.5rem] shadow-2xl max-w-md w-full"
+                >
+                   <h2 className="text-2xl font-bold text-white mb-4">Demo Expired</h2>
+                   <p className="text-slate-400 mb-6">
+                      Your 15-minute demo session has expired. To continue translating, please provide your own Gemini API key. It will be stored locally in your browser.
+                   </p>
+                   <input
+                      type="password"
+                      value={customApiInput}
+                      onChange={e => setCustomApiInput(e.target.value)}
+                      placeholder="AIzaSy..."
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-3 text-white placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all mb-6"
+                   />
+                   <div className="flex gap-4">
+                      <button 
+                         onClick={() => {
+                            if (customApiInput.trim()) {
+                               localStorage.setItem('customApiKey', customApiInput.trim());
+                               ws?.send(JSON.stringify({ type: 'SET_API_KEY', apiKey: customApiInput.trim() }));
+                               setShowApiModal(false);
+                            }
+                         }}
+                         className="flex-1 bg-blue-600 hover:bg-blue-500 text-white font-medium py-3 rounded-xl transition shadow-lg shadow-blue-500/20"
+                      >
+                         Continue
+                      </button>
+                   </div>
+                </motion.div>
+             </div>
+          )}
+       </AnimatePresence>
     </div>
   );
 }

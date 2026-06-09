@@ -3,7 +3,7 @@ export interface Room {
   adminId: string | null;
   adminName: string | null;
   name: string;
-  type: 'CHURCH' | 'CLASSROOM';
+  type: 'CHURCH' | 'CLASSROOM' | 'CONFERENCE';
   mode: 'ONE_WAY' | 'TWO_WAY';
   aecEnabled: boolean;
   activeLanguages: string[]; // ['en', 'es', 'sv']
@@ -19,6 +19,7 @@ export interface ClientData {
   role: ClientRole;
   targetLanguage: string | null; 
   isSpeaking: boolean;
+  apiKey: string | null;
 }
 
 export type ControlMessage =
@@ -32,5 +33,9 @@ export type ControlMessage =
   | { type: 'ADD_LANGUAGE'; language: string }
   | { type: 'SET_LANGUAGE'; language: string }
   | { type: 'SET_SPEAKING'; isSpeaking: boolean }
+  | { type: 'SET_API_KEY'; apiKey: string }
+  | { type: 'API_KEY_REQUIRED' }
+  | { type: 'TRANSCRIPTION'; text: string; language: string; isFinal: boolean; original?: boolean }
   | { type: 'ERROR'; message: string };
+
 
