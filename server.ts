@@ -7,7 +7,11 @@ import { GoogleGenAI } from '@google/genai';
 import { Room, ClientData, ControlMessage } from './src/types';
 
 // State Management
-const rooms: Map<string, Room> = new Map();
+const rooms: Map<string, Room> = new Map([
+  ['1', { id: '1', name: 'Church Hall', type: 'CHURCH', adminId: null, adminName: null, hostConnected: false, mode: 'ONE_WAY', aecEnabled: true, activeLanguages: [] }],
+  ['2', { id: '2', name: 'Language Resource Rm', type: 'CLASSROOM', adminId: null, adminName: null, hostConnected: false, mode: 'ONE_WAY', aecEnabled: true, activeLanguages: [] }],
+  ['3', { id: '3', name: 'Study Group', type: 'CLASSROOM', adminId: null, adminName: null, hostConnected: false, mode: 'ONE_WAY', aecEnabled: true, activeLanguages: [] }]
+]);
 const clients: Map<string, ClientData> = new Map();
 const clientSockets: Map<string, WebSocket> = new Map();
 
@@ -91,34 +95,6 @@ async function startServer() {
         type: 'ROOMS_LIST',
         rooms: Array.from(rooms.values())
       }));
-    } else if (msg.type === 'CREATE_ROOM') {
-      const roomId = uuidv4().substring(0, 8);
-      const newRoom: Room = {
-        id: roomId,
-        adminId: clientId,
-        adminName: msg.adminName,
-        type: msg.roomType,
-        mode: 'ONE_WAY',
-        aecEnabled: true,
-        activeLanguages: ['en'],
-        hostConnected: true
-      };
-      rooms.set(roomId, newRoom);
-      
-      const newClient: ClientData = {
-        id: clientId,
-        roomId: roomId,
-        name: msg.adminName,
-        role: 'HOST',
-        targetLanguage: 'en',
-        isSpeaking: false
-      };
-      clients.set(clientId, newClient);
-      
-      ensureGeminiSession(roomId, 'en', clientId);
-      
-      ws.send(JSON.stringify({ type: 'ROOM_STATE', room: newRoom, clients: [newClient] }));
-      broadcastRoomsList();
     } else if (msg.type === 'JOIN_ROOM') {
       let room = rooms.get(msg.roomId);
       if (!room) {
@@ -126,27 +102,24 @@ async function startServer() {
          return;
       }
       
-      // If admin rejoins
-      let role: ClientRole = 'PARTICIPANT';
-      if (room.adminName === msg.name) {
+      let role: ClientRole = 'LISTENER';
+      // If host re-joins
+      if (msg.name && room.adminName === msg.name) {
         role = 'HOST';
         room.adminId = clientId;
         room.hostConnected = true;
       }
       
-      const targetLang = room.activeLanguages[0] || 'en';
       const newClient: ClientData = {
         id: clientId,
         roomId: msg.roomId,
-        name: msg.name,
-        role,
-        targetLanguage: targetLang,
+        name: msg.name || null,
+        role: role,
+        targetLanguage: null,
         isSpeaking: false
       };
       
       clients.set(clientId, newClient);
-      ensureGeminiSession(msg.roomId, targetLang, clientId);
-      
       broadcastRoomState(msg.roomId);
       broadcastRoomsList();
     } 
@@ -166,6 +139,20 @@ async function startServer() {
           room.aecEnabled = msg.aecEnabled;
           broadcastRoomState(client.roomId);
         }
+      } else if (msg.type === 'SET_NAME') {
+          client.name = msg.name;
+          if (msg.role === 'HOST' && !room.adminId) {
+             room.adminId = clientId;
+             room.adminName = msg.name;
+             room.hostConnected = true;
+             client.role = 'HOST';
+          } else if (msg.role) {
+             client.role = msg.role;
+          } else {
+             client.role = 'PARTICIPANT';
+          }
+          broadcastRoomState(client.roomId);
+          broadcastRoomsList();
       } else if (msg.type === 'ADD_LANGUAGE') {
         if (room.adminId === clientId) {
           if (!room.activeLanguages.includes(msg.language) && room.activeLanguages.length < 3) {
@@ -224,13 +211,9 @@ async function startServer() {
     if (room) {
       if (room.adminId === clientId) {
         room.hostConnected = false;
+        room.adminId = null; // Unclaim host if they disconnect
       }
-      const clientsInRoom = Array.from(clients.values()).filter(c => c.roomId === client.roomId);
-      if (clientsInRoom.length === 0) {
-        rooms.delete(client.roomId);
-      } else {
-        broadcastRoomState(client.roomId);
-      }
+      broadcastRoomState(client.roomId);
       broadcastRoomsList();
     }
   }
