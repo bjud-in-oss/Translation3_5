@@ -26,6 +26,7 @@ interface GeminiSession {
   createdAt: number;
   isDemo: boolean;
   apiKey: string | null;
+  resumptionHandle?: string;
 }
 const geminiSessions: Map<string, GeminiSession> = new Map(); // Key: `${roomId}_${targetLanguage}`
 
@@ -316,22 +317,53 @@ async function startServer() {
 
      const ai = new GoogleGenAI({ apiKey: session.apiKey });
      try {
+       const connectConfig: any = {
+          responseModalities: ['AUDIO'],
+          translationConfig: {
+             targetLanguageCode: targetLanguage,
+             echoTargetLanguage: false
+          },
+          outputAudioTranscription: {},
+          inputAudioTranscription: {},
+          systemInstruction: "You are a real-time translator.",
+          contextWindowCompression: {
+             triggerTokens: "4000",
+             slidingWindow: { targetTokens: "2000" }
+          }
+       };
+
+       if (session.resumptionHandle) {
+          connectConfig.sessionResumption = {
+             handle: session.resumptionHandle,
+             transparent: true
+          };
+       }
+
        session.liveSession = await ai.live.connect({
           model: 'gemini-3.5-live-translate-preview',
-          config: {
-             responseModalities: ['AUDIO'] as any,
-             translationConfig: {
-                targetLanguageCode: targetLanguage,
-                echoTargetLanguage: false
-             },
-             outputAudioTranscription: {},
-             inputAudioTranscription: {},
-             systemInstruction: "You are a real-time translator."
-          },
+          config: connectConfig,
           callbacks: {
              onmessage: (msg: any) => {
                 // If demo mode expired, stop doing anything.
                 if (session.isDemo && Date.now() - session.createdAt > 15 * 60 * 1000) return;
+
+                // Handle Session Resumption Tokens
+                if (msg.sessionResumptionUpdate && msg.sessionResumptionUpdate.newHandle) {
+                   session.resumptionHandle = msg.sessionResumptionUpdate.newHandle;
+                }
+
+                // Handle GoAway signals for background reconnections
+                if (msg.goAway) {
+                   console.warn(`GoAway received for session ${sessionKey}. Reconnecting...`);
+                   if (session.liveSession) {
+                      try { session.liveSession.close(); } catch(e){}
+                      session.liveSession = null;
+                   }
+                   setTimeout(() => {
+                      connectToGemini(sessionKey, targetLanguage, session);
+                   }, 100);
+                   return;
+                }
 
                 // Route audio back to clients listening to this session
                 const audio = msg.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
